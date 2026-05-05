@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CoH Workshop</title>
+<style>
+:root {
+  --bg: #1d1f24;
+  --bg-2: #262a32;
+  --fg: #e6e8ec;
+  --muted: #8b93a1;
+  --accent: #6da3ff;
+  --accent-2: #8ad08a;
+  --warn: #d4a04a;
+  --err: #e26666;
+  --border: #353a44;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.4;
+}
+header {
+  display: flex;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  gap: 1rem;
+}
+header h1 {
+  font-size: 1.1rem;
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+header .status {
+  flex: 1;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+header .status .ok { color: var(--accent-2); }
+header .status .bad { color: var(--err); }
+header button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.7rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+header button:hover { background: var(--bg); }
+
+nav.tabs {
+  display: flex;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+nav.tabs button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0.6rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  border-bottom: 2px solid transparent;
+}
+nav.tabs button.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+nav.tabs button:hover { color: var(--fg); }
+
+main { padding: 1rem; max-width: 1100px; margin: 0 auto; }
+section.tab { display: none; }
+section.tab.active { display: block; }
+
+input[type="text"], input[type="search"] {
+  background: var(--bg-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  width: 100%;
+}
+button.primary {
+  background: var(--accent);
+  color: #0e1320;
+  border: none;
+  padding: 0.4rem 0.9rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+button.primary:hover { filter: brightness(1.1); }
+button.ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.7rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+button.ghost:hover { background: var(--bg-2); }
+button.danger {
+  background: transparent;
+  color: var(--err);
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+th, td {
+  padding: 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+th { color: var(--muted); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+td .pigg-name { color: var(--muted); font-size: 0.8rem; }
+td.path { font-family: ui-monospace, "Cascadia Code", "Consolas", monospace; font-size: 0.8rem; word-break: break-all; }
+td.actions { white-space: nowrap; text-align: right; }
+td.actions button { margin-left: 0.4rem; }
+
+.row { display: flex; gap: 0.5rem; align-items: center; }
+.row > * { flex-shrink: 0; }
+.row .grow { flex: 1; }
+
+.empty { color: var(--muted); padding: 2rem; text-align: center; font-style: italic; }
+.toast {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  max-width: 30rem;
+  background: var(--bg-2);
+  color: var(--fg);
+  padding: 0.7rem 1rem;
+  border-radius: 4px;
+  border-left: 3px solid var(--accent);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  font-size: 0.9rem;
+  z-index: 100;
+}
+.toast.err { border-left-color: var(--err); }
+.toast.ok  { border-left-color: var(--accent-2); }
+
+.setup {
+  max-width: 38rem;
+  margin: 4rem auto;
+  padding: 2rem;
+  background: var(--bg-2);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.setup h2 { margin-top: 0; }
+.setup p { color: var(--muted); }
+.setup .row { margin-top: 1rem; }
+.setup small { color: var(--muted); display: block; margin-top: 0.5rem; }
+
+.muted { color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CoH Workshop</h1>
+  <div class="status" id="status">Loading…</div>
+  <button id="btn-shutdown">Shut down</button>
+</header>
+
+<nav class="tabs" id="tabs" hidden>
+  <button data-tab="browse" class="active">Browse &amp; Extract</button>
+  <button data-tab="stage">Stage Override</button>
+  <button data-tab="active">Active Overrides</button>
+</nav>
+
+<main id="main">
+  <!-- Setup view (no config yet) -->
+  <section id="setup" class="setup" hidden>
+    <h2>Welcome — first-run setup</h2>
+    <p>
+      The workshop needs to know where your City of Heroes install is.
+      Point it at the folder that contains the <code>Client</code> directory
+      (or the <code>Client</code> directory itself).
+    </p>
+    <div class="row">
+      <input type="text" id="setup-path" placeholder="e.g. G:\Ouroboros-v2i210" class="grow">
+      <button class="primary" id="setup-save">Use this folder</button>
+    </div>
+    <small>This is saved to <code>workshop/config.json</code> next to the launcher.</small>
+  </section>
+
+  <!-- Browse & Extract -->
+  <section id="tab-browse" class="tab active" hidden>
+    <div class="row">
+      <input type="search" id="search-input" placeholder="Search paths across all piggs (e.g. AP_plaza_pedestal)">
+      <button class="primary" id="search-btn">Search</button>
+    </div>
+    <div id="search-results"></div>
+  </section>
+
+  <!-- Stage Override -->
+  <section id="tab-stage" class="tab" hidden>
+    <div class="row" style="justify-content: space-between; align-items: baseline;">
+      <h3 style="margin: 0;">Files in working folder</h3>
+      <button class="ghost" id="refresh-work">Refresh</button>
+    </div>
+    <p class="muted">
+      Files extracted via the Browse tab land here. Edit them in Blender
+      (open via <code>File → Import → CoH Geometry</code> in Blender, save the
+      changes by re-exporting back over the same file), then click
+      <em>Stage</em> to round-trip through the addon and drop a patch pigg
+      into your install. Untick <em>Round-trip</em> if you want to package
+      the file as-is without going through Blender.
+    </p>
+    <div id="work-list"></div>
+  </section>
+
+  <!-- Active Overrides -->
+  <section id="tab-active" class="tab" hidden>
+    <div class="row" style="justify-content: space-between; align-items: baseline;">
+      <h3 style="margin: 0;">Workshop-staged overrides</h3>
+      <button class="ghost" id="refresh-overrides">Refresh</button>
+    </div>
+    <p class="muted">
+      Patch piggs the workshop has placed in your install's patch directory.
+      Removing one restores the original asset. Manually-placed piggs are
+      not shown here — only ones whose filename starts with
+      <code>coh_workshop_</code>.
+    </p>
+    <div id="overrides-list"></div>
+  </section>
+</main>
+
+<div id="toast-host"></div>
+
+<script>
+//─── tiny helpers ──────────────────────────────────────────────────────────
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[c]));
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024*1024) return (n/1024).toFixed(1) + " KB";
+  return (n/1024/1024).toFixed(2) + " MB";
+}
+
+let _toastTimer = null;
+function toast(msg, kind="ok") {
+  const host = $('#toast-host');
+  host.innerHTML = `<div class="toast ${kind}">${escapeHtml(msg)}</div>`;
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => host.innerHTML = '', 4000);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: opts.body ? {"Content-Type": "application/json"} : {},
+    ...opts,
+  });
+  const j = await res.json().catch(() => ({error: "non-JSON response"}));
+  if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+  return j;
+}
+
+//─── config / setup ────────────────────────────────────────────────────────
+let _state = { ready: false, detect: null };
+
+async function loadConfig() {
+  const r = await api('/api/config');
+  _state = r;
+  renderHeader();
+  if (r.ready) {
+    $('#setup').hidden = true;
+    $('#tabs').hidden = false;
+    activateTab('browse');
+    await refreshWork();
+    await refreshOverrides();
+  } else {
+    $('#setup').hidden = false;
+    $('#tabs').hidden = true;
+    $$('section.tab').forEach(s => s.hidden = true);
+  }
+}
+
+function renderHeader() {
+  const s = $('#status');
+  if (_state.ready) {
+    const d = _state.detect;
+    s.innerHTML = `<span class="ok">●</span> ${escapeHtml(d.install_root)} — `
+      + `${d.pigg_count} base piggs, patch dir: <code>${escapeHtml(d.patch_dir)}</code>`;
+  } else {
+    s.innerHTML = `<span class="bad">●</span> No install configured`;
+  }
+}
+
+$('#setup-save').onclick = async () => {
+  const path = $('#setup-path').value.trim();
+  if (!path) { toast("Enter a path first", "err"); return; }
+  try {
+    await api('/api/config', { method: 'POST', body: JSON.stringify({install_root: path}) });
+    toast("Saved.", "ok");
+    await loadConfig();
+  } catch (e) { toast(e.message, "err"); }
+};
+
+//─── tabs ──────────────────────────────────────────────────────────────────
+function activateTab(name) {
+  $$('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  $$('section.tab').forEach(s => {
+    const on = s.id === `tab-${name}`;
+    s.classList.toggle('active', on);
+    s.hidden = !on;
+  });
+}
+$$('nav.tabs button').forEach(b => b.onclick = () => activateTab(b.dataset.tab));
+
+//─── search & extract ──────────────────────────────────────────────────────
+async function runSearch() {
+  const q = $('#search-input').value.trim();
+  if (!q) return;
+  const out = $('#search-results');
+  out.innerHTML = '<div class="muted" style="padding: 1rem;">Searching…</div>';
+  try {
+    const r = await api(`/api/piggs/search?q=${encodeURIComponent(q)}`);
+    if (!r.results.length) {
+      out.innerHTML = '<div class="empty">No matches.</div>';
+      return;
+    }
+    let html = `<table><thead><tr>
+      <th>Path</th><th>Pigg</th><th>Size</th><th></th></tr></thead><tbody>`;
+    for (const row of r.results) {
+      html += `<tr>
+        <td class="path">${escapeHtml(row.internal_path)}</td>
+        <td class="pigg-name">${escapeHtml(row.pigg)}</td>
+        <td>${fmtBytes(row.size)}</td>
+        <td class="actions"><button class="ghost" data-pigg="${escapeHtml(row.pigg)}"
+              data-path="${escapeHtml(row.internal_path)}">Extract</button></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    out.innerHTML = html;
+    out.querySelectorAll('button[data-pigg]').forEach(b => {
+      b.onclick = () => extractAsset(b.dataset.pigg, b.dataset.path, b);
+    });
+  } catch (e) { toast(e.message, "err"); out.innerHTML = ''; }
+}
+$('#search-btn').onclick = runSearch;
+$('#search-input').addEventListener('keyup', e => { if (e.key === 'Enter') runSearch(); });
+
+async function extractAsset(pigg, internal_path, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const r = await api('/api/extract', { method: 'POST',
+      body: JSON.stringify({pigg, internal_path}) });
+    toast(`Extracted ${r.work_file} (${fmtBytes(r.size)})`, "ok");
+    btn.textContent = 'Extracted';
+    await refreshWork();
+  } catch (e) {
+    toast(e.message, "err");
+    btn.disabled = false; btn.textContent = 'Extract';
+  }
+}
+
+//─── work files & staging ──────────────────────────────────────────────────
+async function refreshWork() {
+  try {
+    const r = await api('/api/work');
+    const out = $('#work-list');
+    if (!r.files.length) {
+      out.innerHTML = '<div class="empty">Nothing extracted yet. Use the Browse tab.</div>';
+      return;
+    }
+    let html = `<table><thead><tr>
+      <th>File</th><th>Internal path (override target)</th><th>Size</th><th></th></tr></thead><tbody>`;
+    for (const f of r.files) {
+      html += `<tr>
+        <td>${escapeHtml(f.name)}</td>
+        <td class="path">${escapeHtml(f.internal_path) || '<span class="muted">(unknown — extract from Browse tab)</span>'}</td>
+        <td>${fmtBytes(f.size)}</td>
+        <td class="actions">
+          <label class="muted" style="margin-right: 0.4rem;">
+            <input type="checkbox" data-rt="${escapeHtml(f.name)}" checked> round-trip
+          </label>
+          <button class="primary" data-stage="${escapeHtml(f.name)}"
+                                   data-path="${escapeHtml(f.internal_path)}"
+                                   ${!f.internal_path ? 'disabled title="No internal path saved"' : ''}>
+            Stage
+          </button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    out.innerHTML = html;
+    out.querySelectorAll('button[data-stage]').forEach(b => {
+      b.onclick = () => stageAsset(b.dataset.stage, b.dataset.path, b);
+    });
+  } catch (e) { toast(e.message, "err"); }
+}
+$('#refresh-work').onclick = refreshWork;
+
+async function stageAsset(work_file, internal_path, btn) {
+  const rt = document.querySelector(`input[data-rt="${work_file}"]`);
+  const roundtrip = rt ? rt.checked : true;
+  btn.disabled = true; btn.textContent = roundtrip ? 'Round-tripping…' : 'Staging…';
+  try {
+    const r = await api('/api/stage', { method: 'POST',
+      body: JSON.stringify({work_file, internal_path, roundtrip}) });
+    toast(`Staged ${r.pigg_name} (${fmtBytes(r.size)})`, "ok");
+    btn.textContent = 'Staged ✓';
+    await refreshOverrides();
+  } catch (e) {
+    toast(e.message, "err");
+    btn.disabled = false; btn.textContent = 'Stage';
+  }
+}
+
+//─── active overrides ──────────────────────────────────────────────────────
+async function refreshOverrides() {
+  try {
+    const r = await api('/api/overrides');
+    const out = $('#overrides-list');
+    if (!r.overrides.length) {
+      out.innerHTML = '<div class="empty">No workshop overrides staged.</div>';
+      return;
+    }
+    let html = `<table><thead><tr>
+      <th>Pigg</th><th>Contains</th><th>Size</th><th></th></tr></thead><tbody>`;
+    for (const o of r.overrides) {
+      const paths = o.internal_paths.map(escapeHtml).join('<br>');
+      html += `<tr>
+        <td>${escapeHtml(o.name)}</td>
+        <td class="path">${paths}</td>
+        <td>${fmtBytes(o.size)}</td>
+        <td class="actions"><button class="danger" data-remove="${escapeHtml(o.name)}">Remove</button></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    out.innerHTML = html;
+    out.querySelectorAll('button[data-remove]').forEach(b => {
+      b.onclick = () => removeOverride(b.dataset.remove, b);
+    });
+  } catch (e) { toast(e.message, "err"); }
+}
+$('#refresh-overrides').onclick = refreshOverrides;
+
+async function removeOverride(name, btn) {
+  if (!confirm(`Remove ${name}? The original asset will load again on next client launch.`)) return;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await api('/api/overrides/remove', { method: 'POST',
+      body: JSON.stringify({pigg_filename: name}) });
+    toast(`Removed ${name}`, "ok");
+    await refreshOverrides();
+  } catch (e) { toast(e.message, "err"); btn.disabled = false; btn.textContent = 'Remove'; }
+}
+
+//─── shutdown ──────────────────────────────────────────────────────────────
+$('#btn-shutdown').onclick = async () => {
+  if (!confirm("Shut down the workshop?")) return;
+  try { await api('/api/shutdown', { method: 'POST', body: '{}' }); } catch (e) {}
+  document.body.innerHTML = '<div class="empty" style="margin-top: 4rem;">'
+    + 'Workshop shut down. You can close this tab.</div>';
+};
+
+//─── boot ──────────────────────────────────────────────────────────────────
+loadConfig().catch(e => toast(e.message, "err"));
+</script>
+
+</body>
+</html>

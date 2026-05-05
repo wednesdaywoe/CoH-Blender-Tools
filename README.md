@@ -1,8 +1,8 @@
 # CoH Blender Tools
 
-Import City of Heroes geometry (`.geo`) and animations (`.anim`) directly into Blender, with full material/texture wiring.
+Import City of Heroes geometry (`.geo`) and animations (`.anim`) directly into Blender, with material/texture wiring.
 
-This bundle replaces the legacy 3DS Max 2011 + GetVrml + GetAnimation2 + GetTex workflow. Built and tested against Ouroboros v2i210 piggs and Blender 5.0 (4.0+ should work).
+The goal of this project is to replace the legacy 3DS Max 2011 + GetVrml + GetAnimation2 + GetTex workflow. So far it's been tested against Ouroboros v2i210 piggs and Blender 5.0 (4.0+ should work).
 
 ---
 
