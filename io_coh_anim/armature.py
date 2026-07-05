@@ -12,6 +12,7 @@ from .core.bones import (
     BONE_NAMES, BONE_ID, BONE_PARENT, STANDARD_HIERARCHY,
     bone_id_from_name, bone_name_from_id,
 )
+from .core.bindpose import bind_pose_world, resolve_body_type
 from .core.coords import game_to_blender, blender_to_game
 from .core.transforms import axis_angle_to_quat, quat_to_axis_angle
 
@@ -72,6 +73,88 @@ def _build_hierarchy(armature, bone_name, parent_name):
     children = STANDARD_HIERARCHY.get(bone_name, [])
     for child_name in children:
         _build_hierarchy(armature, child_name, bone_name)
+
+
+def create_bind_pose_armature(context, body_type="male", name=None):
+    """Create a CoH armature posed at the canonical rest (bind) pose.
+
+    Unlike ``create_coh_armature`` (which stacks every bone at the origin),
+    this places each bone at its real joint position for the given body type,
+    reconstructed from the game's base animations (see ``core.bindpose``). The
+    result overlays a skinned character mesh and poses/animates around the
+    correct joints, so an imported skinned ``.geo`` deforms sensibly.
+
+    Args:
+        context: Blender context
+        body_type: 'male', 'fem', or 'huge' (aliases accepted)
+        name: Object name (defaults to ``CoH_<body_type>_bindpose``)
+
+    Returns:
+        The created armature object.
+    """
+    body_type = resolve_body_type(body_type)
+    if name is None:
+        name = f"CoH_{body_type}_bindpose"
+
+    # World-space joint positions in Blender coordinates.
+    world = {b: game_to_blender(p) for b, p in bind_pose_world(body_type).items()}
+
+    armature = bpy.data.armatures.new(f"{name}_Data")
+    obj = bpy.data.objects.new(name, armature)
+    context.collection.objects.link(obj)
+    context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    try:
+        _build_bind_pose(armature, world, "HIPS", None)
+    finally:
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    for bone in armature.bones:
+        bid = bone_id_from_name(bone.name)
+        if bid >= 0:
+            bone["coh_bone_id"] = bid
+
+    return obj
+
+
+def _build_bind_pose(armature, world, bone_name, parent_name):
+    """Recursively create a bone at its bind-pose joint, tail toward a child."""
+    head = mathutils.Vector(world.get(bone_name, (0.0, 0.0, 0.0)))
+    children = STANDARD_HIERARCHY.get(bone_name, [])
+
+    # Point the tail at the first child that sits somewhere other than the head,
+    # so the bone visibly runs down the chain.
+    tail = None
+    for child_name in children:
+        if child_name in world:
+            cvec = mathutils.Vector(world[child_name])
+            if (cvec - head).length > 1e-5:
+                tail = cvec
+                break
+
+    if tail is None:
+        # Leaf (or degenerate) bone: continue the direction from the parent,
+        # falling back to a short vertical stub.
+        direction = None
+        if parent_name and parent_name in world:
+            direction = head - mathutils.Vector(world[parent_name])
+        if direction is None or direction.length < 1e-5:
+            direction = mathutils.Vector((0.0, 0.0, DEFAULT_BONE_LENGTH))
+        tail = head + direction.normalized() * DEFAULT_BONE_LENGTH
+
+    edit_bone = armature.edit_bones.new(bone_name)
+    edit_bone.head = head
+    edit_bone.tail = tail
+
+    if parent_name:
+        parent_bone = armature.edit_bones.get(parent_name)
+        if parent_bone:
+            edit_bone.parent = parent_bone
+
+    for child_name in children:
+        _build_bind_pose(armature, world, child_name, bone_name)
 
 
 def armature_from_anim(context, anim_data, name="CoH_Armature"):

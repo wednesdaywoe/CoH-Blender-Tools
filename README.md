@@ -100,6 +100,10 @@ Prints the source pigg and internal path so you can compute override locations u
 |---|---|
 | `.geo` v1 / v2 / v3-8 import | Working, round-trip bit-exact on positions and winding |
 | `.geo` export | Working; metadata fields (`lod_distances`, `bone_id`) need to be preserved or re-supplied for in-game use |
+| Skinned mesh import (vertex weights) | Working — per-vertex bone weights become vertex groups named by CoH bone (`HIPS`, `UARMR`, …) |
+| Skinned mesh armature bind | Working — with a CoH armature active on import, skinned meshes are parented + get an Armature modifier so they deform |
+| Auto bind-pose skeleton on import | Working — a skinned `.geo` with no armature present builds a rest-pose armature at the correct joint positions (male/fem/huge, auto-detected) and binds to it, so the mesh deforms around real joints with no manual skeleton step |
+| Skinned mesh export | Working — vertex groups named after CoH bones are written back as GEO skinning (top 2 influences per vertex, ≤15 bones per mesh) |
 | Direct `.texture` references | Working — DXT1/DXT5 decoded in pure Python, wired into Principled BSDF base color |
 | `X_*` trick references via `bin/tricks.bin` | Working — `Base1` diffuse is resolved |
 | `.anim` / `.animx` / `.skelx` import + export | Working |
@@ -109,6 +113,7 @@ Prints the source pigg and internal path so you can compute override locations u
 
 - **Multi-pass trick layers**: only the trick's `Base1` (diffuse) is wired. `BumpMap1`, `Multiply1`, `DualColor1`, `Mask`, etc. are not connected. Most environment assets read correctly with just the diffuse.
 - **Collision PolyGrid and LOD reductions**: written as zeros on export. The engine tolerates this for some static props but it's not a substitute for what `getvrml` produces. Anything where collision matters or aggressive LOD is needed should still go through the legacy tools.
+- **Skinned deformation uses a canonical bind-pose skeleton**: importing a skinned `.geo` with no armature present auto-builds a rest skeleton at the correct joint positions (reconstructed from the game's own base animations, for male/fem/huge — pick the body type in the import options or let it auto-detect from the filename). This makes the mesh pose and animate around real joints out of the box. Two caveats: (1) it's the *standard* humanoid rig, so unusually-proportioned custom bodies won't match exactly; (2) bone rest *orientations* follow a natural down-the-chain convention rather than the game's exact per-bone local axes, so playing a game `.anim` on top may need minor cleanup. `Create CoH Armature` still exists but stacks every bone at the origin — prefer the auto bind-pose (or import a real `.skelx`/`.anim`) for anything you intend to pose.
 - **Reflection quads**: slot preserved on export, not generated.
 - **DXT decode is pure Python**: a 512×512 image takes ~1s, a 2048×2048 ~15s. Large meshes with many textures can be slow to import. Untick "Import Textures" if you only need geometry.
 

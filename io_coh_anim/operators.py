@@ -315,17 +315,85 @@ class COH_OT_import_geo(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
+    bind_to_armature: BoolProperty(
+        name="Bind to Armature",
+        description="If a CoH armature is active (or the scene has exactly one), "
+                    "parent skinned meshes to it and add an Armature modifier so "
+                    "they deform. Vertex groups are imported either way",
+        default=True,
+    )
+
+    auto_create_armature: BoolProperty(
+        name="Auto-create Bind-pose Armature",
+        description="When a mesh is skinned but no CoH armature exists to bind "
+                    "to, build one automatically at the canonical rest (bind) "
+                    "pose so the mesh deforms around the correct joints",
+        default=True,
+    )
+
+    body_type: EnumProperty(
+        name="Body Type",
+        description="Skeleton proportions for an auto-created bind-pose armature",
+        items=[
+            ('auto', "Auto", "Guess from the file/mesh name (defaults to Male)"),
+            ('male', "Male", "Standard male body type"),
+            ('fem', "Female", "Female body type"),
+            ('huge', "Huge", "Large body type"),
+        ],
+        default='auto',
+    )
+
     def execute(self, context):
         from .formats.geo import read_geo
         from .mesh import mesh_from_geo
+        from .armature import create_bind_pose_armature
+        from .core.bindpose import guess_body_type
 
         geo_file = read_geo(self.filepath)
         texture_dir = os.path.dirname(self.filepath) if self.import_textures else None
-        objects = mesh_from_geo(context, geo_file, texture_dir=texture_dir)
+
+        # Pick a target armature: the active object if it's an armature,
+        # otherwise the scene's sole armature (if unambiguous).
+        armature_obj = None
+        if self.bind_to_armature:
+            act = context.active_object
+            if act and act.type == 'ARMATURE':
+                armature_obj = act
+            else:
+                arms = [o for o in context.scene.objects if o.type == 'ARMATURE']
+                if len(arms) == 1:
+                    armature_obj = arms[0]
+
+        # No suitable armature but the geo is skinned: build a bind-pose
+        # armature so the mesh actually deforms around its joints.
+        geo_is_skinned = any(
+            m.bone_info and m.bone_info.weights for m in geo_file.models
+        )
+        created_armature = False
+        if (self.bind_to_armature and self.auto_create_armature
+                and armature_obj is None and geo_is_skinned):
+            model_names = " ".join(m.name for m in geo_file.models)
+            bt = (guess_body_type(os.path.basename(self.filepath), model_names)
+                  if self.body_type == 'auto' else self.body_type)
+            armature_obj = create_bind_pose_armature(context, body_type=bt)
+            created_armature = True
+
+        objects = mesh_from_geo(context, geo_file, texture_dir=texture_dir,
+                                armature_obj=armature_obj)
 
         total_verts = sum(m.vert_count for m in geo_file.models)
-        self.report({'INFO'},
-                    f"Imported {len(objects)} mesh(es), {total_verts} vertices")
+        skinned = sum(1 for o in objects if o.type == 'MESH' and o.vertex_groups)
+        msg = f"Imported {len(objects)} mesh(es), {total_verts} vertices"
+        if skinned:
+            if created_armature:
+                msg += f"; built bind-pose armature '{armature_obj.name}' and " \
+                       f"bound {skinned} skinned mesh(es)"
+            elif armature_obj is not None:
+                msg += f"; bound {skinned} skinned mesh(es) to '{armature_obj.name}'"
+            else:
+                msg += f"; {skinned} skinned mesh(es) have vertex groups " \
+                       "(no armature to bind — import a CoH skeleton first)"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 

@@ -727,20 +727,39 @@ def _decompress_model_geometry(model, pack_data, packed_data, boneinfo_offset):
         if uv2_data:
             model.uvs2 = decompress_uvs(uv2_data, model.vert_count)
 
-    # Bone weights and matrix indices
+    # Bone skinning: BoneInfo table + per-vertex weights and matrix indices
     if boneinfo_offset > 0 and model.vert_count > 0:
+        model.bone_info = model.bone_info or BoneInfo()
+
+        # The BoneInfo struct lives in the struct-data region at
+        # boneinfo_offset, which is relative to the same base as the pack-data
+        # offsets (the start of the combined packed+struct block). On-disk
+        # layout is 72 bytes:
+        #   numbones                     (U32)
+        #   bone_ID[MAX_OBJBONES]        (U32 each) — game BoneId per local slot
+        #   weights, matidxs             (U32 pointers, resolved at load; ignored)
+        # Without this table the matrix indices below can't be mapped to bones,
+        # so no vertex groups would be created on import.
+        if boneinfo_offset + 4 + MAX_OBJBONES * 4 <= len(packed_data):
+            numbones = struct.unpack_from('<I', packed_data, boneinfo_offset)[0]
+            if 0 < numbones <= MAX_OBJBONES:
+                bone_ids = struct.unpack_from(
+                    f'<{MAX_OBJBONES}I', packed_data, boneinfo_offset + 4
+                )
+                model.bone_info.numbones = numbones
+                model.bone_info.bone_ids = list(bone_ids[:numbones])
+
         # Weights are U8 per vertex (scaled by 255)
         if pack_data['weights'][1] > 0:
             weight_data = _extract_pack_block(pack_data['weights'], packed_data)
             if weight_data:
-                model.bone_info = model.bone_info or BoneInfo()
                 model.bone_info.weights = [b / 255.0 for b in weight_data]
 
-        # Matrix indices are U8 pairs per vertex
+        # Matrix indices are U8 pairs per vertex. Each value is a matrix-palette
+        # slot (local bone index * 3); consumers divide by 3 to index bone_ids.
         if pack_data['matidxs'][1] > 0:
             matidx_data = _extract_pack_block(pack_data['matidxs'], packed_data)
             if matidx_data:
-                model.bone_info = model.bone_info or BoneInfo()
                 model.bone_info.matidxs = [
                     (matidx_data[i * 2], matidx_data[i * 2 + 1])
                     for i in range(model.vert_count)
@@ -792,6 +811,15 @@ def _write_geo(f, geo_file):
     # Align packed data to 4 bytes
     while len(packed_data) % 4 != 0:
         packed_data += b'\x00'
+
+    # Rebase BoneInfo offsets: struct_data is concatenated after packed_data in
+    # the file, but boneinfo offsets were recorded relative to struct_data's
+    # start. Add the (now final) packed_data length so they share the same base
+    # as the pack-data offsets, which is what the reader resolves against.
+    packed_len = len(packed_data)
+    for pack_info in model_pack_infos:
+        if pack_info.get('has_boneinfo'):
+            pack_info['boneinfo_offset'] += packed_len
 
     # Build model header structs
     model_headers_bin = b''
@@ -926,7 +954,9 @@ def _compress_model_geometry(model, packed_data, struct_data):
     _add_pack('reductions', None)
     _add_pack('reflection_quads', None)
 
-    # BoneInfo struct data
+    # BoneInfo struct data. The offset recorded here is relative to the start
+    # of struct_data; _write_geo rebases it onto the combined packed+struct
+    # block (the base the reader resolves against) once packed_data is final.
     if model.bone_info and model.bone_info.numbones > 0:
         bi_offset = len(struct_data)
         # BoneInfo: numbones(4) + bone_ID[15](60) + weights_ptr(4) + matidxs_ptr(4) = 72
@@ -940,8 +970,10 @@ def _compress_model_geometry(model, packed_data, struct_data):
         bi_data += struct.pack('<I', 0)  # matidxs pointer (resolved at load)
         struct_data.extend(bi_data)
         pack_info['boneinfo_offset'] = bi_offset
+        pack_info['has_boneinfo'] = True
     else:
         pack_info['boneinfo_offset'] = 0
+        pack_info['has_boneinfo'] = False
 
     return pack_info
 

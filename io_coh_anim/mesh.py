@@ -15,7 +15,7 @@ try:
 except ImportError:
     _HAS_BPY = False
 
-from .formats.geo import GeoFile, GeoModel, GeoHeader, TexID
+from .formats.geo import GeoFile, GeoModel, GeoHeader, TexID, BoneInfo, MAX_OBJBONES
 from .core.coords import game_to_blender, blender_to_game
 import math
 import os
@@ -24,7 +24,8 @@ import os
 # ─── Import: GEO → Blender ──────────────────────────────────────────────
 
 
-def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None):
+def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None,
+                  armature_obj=None):
     """Create Blender mesh objects from a GEO file.
 
     Args:
@@ -34,6 +35,9 @@ def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None):
         texture_dir: Optional folder to search for `.texture`/`.dds` files
             matching each tex_name. If a match is found it's loaded as an
             image and wired into the material's Principled BSDF base color.
+        armature_obj: Optional CoH armature to bind skinned meshes to. When
+            given, each mesh with vertex groups is parented to it and gets an
+            Armature modifier so it actually deforms.
 
     Returns:
         List of created Blender objects
@@ -48,7 +52,42 @@ def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None):
         )
         objects.append(obj)
 
+    if armature_obj is not None:
+        bind_meshes_to_armature(objects, armature_obj)
+
     return objects
+
+
+def bind_meshes_to_armature(objects, armature_obj):
+    """Parent skinned meshes to a CoH armature and add Armature modifiers.
+
+    The importer already names vertex groups by CoH bone name, so binding is
+    just wiring each mesh to the armature; the modifier matches groups to bones
+    by name. Meshes without vertex groups are left untouched.
+
+    Returns:
+        Number of meshes bound.
+    """
+    if armature_obj is None or armature_obj.type != 'ARMATURE':
+        return 0
+
+    bound = 0
+    for obj in objects:
+        if obj.type != 'MESH' or not obj.vertex_groups:
+            continue
+
+        # Parent without moving the mesh in world space.
+        obj.parent = armature_obj
+        obj.matrix_parent_inverse = armature_obj.matrix_world.inverted()
+
+        mod = next((m for m in obj.modifiers if m.type == 'ARMATURE'), None)
+        if mod is None:
+            mod = obj.modifiers.new(name="Armature", type='ARMATURE')
+        mod.object = armature_obj
+        mod.use_vertex_groups = True
+        bound += 1
+
+    return bound
 
 
 def _create_mesh_object(context, model, tex_names, texture_dir=None, tex_image_cache=None):
@@ -280,38 +319,51 @@ def _wire_texture_into_material(mat, tex_name, texture_dir, tex_image_cache):
 
 
 def _apply_skinning(obj, model):
-    """Apply bone skinning data from GeoModel.bone_info to vertex groups."""
+    """Apply bone skinning data from GeoModel.bone_info to vertex groups.
+
+    Each vertex carries a primary/secondary matrix-palette slot (matidxs) and a
+    blend weight. The slot is a *local* bone index * 3, so we divide by 3 to
+    index bone_info.bone_ids, which maps to the game BoneId. Vertex groups are
+    named by CoH bone name (HIPS, UARMR, ...) so they line up with an imported
+    armature; unknown IDs fall back to "bone_<id>".
+    """
+    from .core.bones import bone_name_from_id
+
     bi = model.bone_info
-    if not bi or not bi.matidxs:
+    if not bi or not bi.matidxs or not bi.weights or not bi.bone_ids:
         return
 
-    # Create vertex groups for each bone
-    bone_groups = {}
-    bone_ids = bi.bone_ids if bi.bone_ids else list(range(bi.numbones))
+    bone_ids = bi.bone_ids
+    group_cache = {}
 
-    for bone_id in bone_ids:
-        if bone_id not in bone_groups:
-            group_name = f"bone_{bone_id}"
-            vg = obj.vertex_groups.new(name=group_name)
-            bone_groups[bone_id] = vg
+    def _group_for(local):
+        """Vertex group for a local bone slot, created on demand."""
+        if local < 0 or local >= len(bone_ids):
+            return None
+        if local in group_cache:
+            return group_cache[local]
+        bid = bone_ids[local]
+        name = bone_name_from_id(bid) or f"bone_{bid}"
+        vg = obj.vertex_groups.get(name) or obj.vertex_groups.new(name=name)
+        group_cache[local] = vg
+        return vg
 
-    # Assign weights
-    for vi in range(model.vert_count):
-        if vi >= len(bi.matidxs) or vi >= len(bi.weights):
-            continue
-
+    n = min(model.vert_count, len(bi.matidxs), len(bi.weights))
+    for vi in range(n):
         idx0, idx1 = bi.matidxs[vi]
         weight = bi.weights[vi]
 
-        if idx0 < len(bone_ids):
-            bid0 = bone_ids[idx0]
-            if bid0 in bone_groups:
-                bone_groups[bid0].add([vi], weight, 'REPLACE')
+        local0 = idx0 // 3
+        g0 = _group_for(local0)
+        if g0 is not None and weight > 0.0:
+            g0.add([vi], weight, 'REPLACE')
 
-        if idx1 < len(bone_ids) and weight < 1.0:
-            bid1 = bone_ids[idx1]
-            if bid1 in bone_groups:
-                bone_groups[bid1].add([vi], 1.0 - weight, 'REPLACE')
+        # Secondary influence gets the remainder, unless it's the same bone.
+        local1 = idx1 // 3
+        if weight < 1.0 and local1 != local0:
+            g1 = _group_for(local1)
+            if g1 is not None:
+                g1.add([vi], 1.0 - weight, 'REPLACE')
 
 
 # ─── Export: Blender → GEO ──────────────────────────────────────────────
@@ -409,6 +461,7 @@ def _extract_mesh(context, obj, all_tex_names, tex_name_map):
     normals = []
     uvs = []
     uvs2 = []
+    src_vidx = []   # source Blender vertex index per output vertex (for skinning)
 
     # Rounding tolerances — well below GEO quantisation precision
     # (normals: 1/256 ≈ 0.0039, UV1: 1/4096 ≈ 0.00024, UV2: 1/32768)
@@ -446,6 +499,7 @@ def _extract_mesh(context, obj, all_tex_names, tex_name_map):
 
         idx = len(vertices)
         vert_map[key] = idx
+        src_vidx.append(vi)
 
         co = mesh.vertices[vi].co
         vertices.append(blender_to_game((co.x, co.y, co.z)))
@@ -504,6 +558,9 @@ def _extract_mesh(context, obj, all_tex_names, tex_name_map):
         max_bound = (0.0, 0.0, 0.0)
         radius = 0.0
 
+    # Skinning: read vertex-group weights back into a BoneInfo (or None).
+    bone_info = _extract_skin_weights(obj, mesh, src_vidx)
+
     model = GeoModel(
         name=obj.name,
         radius=radius,
@@ -517,7 +574,77 @@ def _extract_mesh(context, obj, all_tex_names, tex_name_map):
         uvs2=uvs2,
         triangles=triangles,
         tex_ids=tex_ids,
+        bone_info=bone_info,
     )
 
     eval_obj.to_mesh_clear()
     return model
+
+
+def _extract_skin_weights(obj, mesh, src_vidx):
+    """Build a BoneInfo from Blender vertex groups for GEO export.
+
+    Mirrors the import path: vertex groups named after CoH bones map back to
+    game BoneIds. Each vertex keeps its top two influences (CoH stores a
+    primary/secondary matrix slot per vertex); the blend weight is the primary
+    fraction. The local bone table is capped at MAX_OBJBONES, keeping the
+    most-referenced bones. Returns None if the mesh has no CoH-bone groups.
+    """
+    from collections import Counter
+    from .core.bones import bone_id_from_name
+
+    # Blender group index → game BoneId, for groups whose name is a CoH bone.
+    grp_bone = {}
+    for vg in obj.vertex_groups:
+        bid = bone_id_from_name(vg.name)
+        if bid >= 0:
+            grp_bone[vg.index] = bid
+    if not grp_bone:
+        return None
+
+    # Top-two CoH influences per output (split) vertex.
+    out_infl = []
+    for vi in src_vidx:
+        infl = [
+            (grp_bone[g.group], g.weight)
+            for g in mesh.vertices[vi].groups
+            if g.group in grp_bone and g.weight > 0.0
+        ]
+        infl.sort(key=lambda bw: -bw[1])
+        out_infl.append(infl[:2])
+
+    # Local bone table, capped at MAX_OBJBONES by reference count.
+    usage = Counter(bid for infl in out_infl for bid, _ in infl)
+    if not usage:
+        return None
+    kept_bones = [bid for bid, _ in usage.most_common(MAX_OBJBONES)]
+    slot_of = {bid: i for i, bid in enumerate(kept_bones)}
+
+    weights = []
+    matidxs = []
+    for infl in out_infl:
+        infl = [(bid, w) for bid, w in infl if bid in slot_of]
+        if not infl:
+            # Unweighted after capping: pin to the first (most-used) bone.
+            weights.append(1.0)
+            matidxs.append((0, 0))
+            continue
+        b0, w0 = infl[0]
+        s0 = slot_of[b0]
+        if len(infl) > 1:
+            b1, w1 = infl[1]
+            s1 = slot_of[b1]
+            total = w0 + w1
+            primary = w0 / total if total > 0 else 1.0
+        else:
+            s1, primary = s0, 1.0
+        weights.append(min(1.0, max(0.0, primary)))
+        # Matrix-palette slots are the local bone index * 3 (see reader).
+        matidxs.append((s0 * 3, s1 * 3))
+
+    return BoneInfo(
+        numbones=len(kept_bones),
+        bone_ids=kept_bones,
+        weights=weights,
+        matidxs=matidxs,
+    )
