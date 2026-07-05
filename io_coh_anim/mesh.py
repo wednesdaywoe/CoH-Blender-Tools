@@ -25,7 +25,7 @@ import os
 
 
 def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None,
-                  armature_obj=None):
+                  armature_obj=None, attach_to_bones=False):
     """Create Blender mesh objects from a GEO file.
 
     Args:
@@ -38,6 +38,11 @@ def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None,
         armature_obj: Optional CoH armature to bind skinned meshes to. When
             given, each mesh with vertex groups is parented to it and gets an
             Armature modifier so it actually deforms.
+        attach_to_bones: When binding to an armature, first translate each
+            object to its root bone on that armature (Geopy-style). CoH
+            character/costume geos author each piece in bone-local space, so
+            this is what assembles them onto the skeleton. Object transform
+            only — mesh data is untouched, so export still round-trips.
 
     Returns:
         List of created Blender objects
@@ -53,6 +58,8 @@ def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None,
         objects.append(obj)
 
     if armature_obj is not None:
+        if attach_to_bones:
+            position_objects_on_bones(objects, geo_file.models, armature_obj)
         bind_meshes_to_armature(objects, armature_obj)
 
     return objects
@@ -88,6 +95,83 @@ def bind_meshes_to_armature(objects, armature_obj):
         bound += 1
 
     return bound
+
+
+def _anchor_bone(model_name, model, armature_obj):
+    """Pick the armature bone a model should be positioned at (Geopy-style).
+
+    CoH model names carry their root bone (``GEO_N_LlegL_...`` → ``LlegL``), so
+    that's tried first. When the named bone isn't in the armature (e.g. a
+    costume bone like Hair against a deform-only rig), fall back to the model's
+    highest-in-hierarchy weighted bone that the armature does have. Matching is
+    case-insensitive. Returns the armature's bone name, or None.
+    """
+    from .core.bones import bone_id_from_name, bone_name_from_id, BONE_PARENT
+
+    by_lower = {b.name.lower(): b.name for b in armature_obj.data.bones}
+
+    def in_arm(bone_name):
+        return by_lower.get(bone_name.lower()) if bone_name else None
+
+    # 1. Root bone from the model name (strip GEO_/N_ prefixes, first token).
+    n = model_name
+    for prefix in ("GEO_", "N_"):
+        if n.upper().startswith(prefix):
+            n = n[len(prefix):]
+    bid = bone_id_from_name(n.split("_")[0])
+    if bid >= 0:
+        hit = in_arm(bone_name_from_id(bid))
+        if hit:
+            return hit
+
+    # 2. Fallback: the topmost weighted bone present in the armature.
+    if model.bone_info and model.bone_info.bone_ids:
+        cands = []
+        for b in model.bone_info.bone_ids:
+            hit = in_arm(bone_name_from_id(b))
+            if hit:
+                cands.append(hit)
+        if cands:
+            def depth(bone_name):
+                d, cur = 0, bone_name
+                while cur in BONE_PARENT:
+                    cur = BONE_PARENT[cur]
+                    d += 1
+                return d
+            return min(cands, key=depth)
+
+    return None
+
+
+def position_objects_on_bones(objects, models, armature_obj):
+    """Translate each object to its root bone on the armature (Geopy-style).
+
+    CoH character/costume ``.geo`` pieces are authored in bone-local space
+    (centred near the origin), so on their own they pile up at 0,0. Moving each
+    object to its bone's head assembles the character on the skeleton. Only the
+    object transform is set (mesh data is left in bone-local space, so a later
+    export still round-trips). Returns the number of objects moved.
+    """
+    import mathutils  # noqa: F401  (mathutils.Vector via bone.head_local)
+
+    if armature_obj is None or armature_obj.type != 'ARMATURE':
+        return 0
+
+    mw = armature_obj.matrix_world
+    bones = armature_obj.data.bones
+    moved = 0
+    for obj, model in zip(objects, models):
+        if obj.type != 'MESH':
+            continue
+        bone_name = _anchor_bone(obj.name, model, armature_obj)
+        if not bone_name:
+            continue
+        # Freshly created objects are at the origin with identity transform,
+        # so setting location places the bone-local mesh at the bone's head.
+        obj.location = mw @ bones[bone_name].head_local
+        moved += 1
+
+    return moved
 
 
 def _create_mesh_object(context, model, tex_names, texture_dir=None, tex_image_cache=None):

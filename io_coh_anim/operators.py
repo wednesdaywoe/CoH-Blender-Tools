@@ -394,6 +394,15 @@ class COH_OT_import_geo(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
+    attach_to_bones: BoolProperty(
+        name="Attach Objects to Bones",
+        description="Move each imported object to its bone on the armature "
+                    "(Geopy-style). CoH character/costume geos are authored in "
+                    "bone-local space, so this assembles them onto the skeleton. "
+                    "Object transform only — mesh data and export are unaffected",
+        default=True,
+    )
+
     auto_create_armature: BoolProperty(
         name="Auto-create Bind-pose Armature",
         description="When a mesh is skinned but no CoH armature exists to bind "
@@ -466,7 +475,8 @@ class COH_OT_import_geo(bpy.types.Operator, ImportHelper):
             created_armature = True
 
         objects = mesh_from_geo(context, geo_file, texture_dir=texture_dir,
-                                armature_obj=armature_obj)
+                                armature_obj=armature_obj,
+                                attach_to_bones=self.attach_to_bones)
 
         total_verts = sum(m.vert_count for m in geo_file.models)
         skinned = sum(1 for o in objects if o.type == 'MESH' and o.vertex_groups)
