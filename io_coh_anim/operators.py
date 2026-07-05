@@ -343,6 +343,21 @@ class COH_OT_import_geo(bpy.types.Operator, ImportHelper):
         default='auto',
     )
 
+    bone_tail_mode: EnumProperty(
+        name="Bone Tails",
+        description="How to orient bones in an auto-created bind-pose armature. "
+                    "The deform pivot is identical either way",
+        items=[
+            ('chain', "Toward Child",
+             "Point each bone at its child joint — easier to select and "
+             "hand-pose"),
+            ('nub', "+Y Nub (Geopy-compatible)",
+             "Short +Y stubs with zero roll, matching Geopy and cohbodies.blend "
+             "so game/Geopy-authored .anim rotations map 1:1"),
+        ],
+        default='chain',
+    )
+
     def execute(self, context):
         from .formats.geo import read_geo
         from .mesh import mesh_from_geo
@@ -375,7 +390,8 @@ class COH_OT_import_geo(bpy.types.Operator, ImportHelper):
             model_names = " ".join(m.name for m in geo_file.models)
             bt = (guess_body_type(os.path.basename(self.filepath), model_names)
                   if self.body_type == 'auto' else self.body_type)
-            armature_obj = create_bind_pose_armature(context, body_type=bt)
+            armature_obj = create_bind_pose_armature(context, body_type=bt,
+                                                     tail_mode=self.bone_tail_mode)
             created_armature = True
 
         objects = mesh_from_geo(context, geo_file, texture_dir=texture_dir,

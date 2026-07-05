@@ -20,6 +20,12 @@ from .core.transforms import axis_angle_to_quat, quat_to_axis_angle
 # Default bone length in Blender units (cosmetic only, affects display)
 DEFAULT_BONE_LENGTH = 0.1
 
+# Geopy / cohbodies.blend build every bone as a short +Y nub of this length
+# with zero roll. Matching it keeps the local bone axes identical to those
+# tools, which is what game / Geopy-authored .anim rotations are keyed against.
+NUB_TAIL_LENGTH = 0.05
+NUB_TAIL_VECTOR = (0.0, 1.0, 0.0)
+
 
 def create_coh_armature(context, name="CoH_Armature"):
     """Create a fresh CoH armature with the standard humanoid hierarchy.
@@ -45,7 +51,7 @@ def create_coh_armature(context, name="CoH_Armature"):
     bpy.ops.object.mode_set(mode='EDIT')
 
     try:
-        _build_hierarchy(armature, "HIPS", None)
+        _build_hierarchy(armature, "Hips", None)
     finally:
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -75,7 +81,7 @@ def _build_hierarchy(armature, bone_name, parent_name):
         _build_hierarchy(armature, child_name, bone_name)
 
 
-def create_bind_pose_armature(context, body_type="male", name=None):
+def create_bind_pose_armature(context, body_type="male", name=None, tail_mode="chain"):
     """Create a CoH armature posed at the canonical rest (bind) pose.
 
     Unlike ``create_coh_armature`` (which stacks every bone at the origin),
@@ -88,6 +94,11 @@ def create_bind_pose_armature(context, body_type="male", name=None):
         context: Blender context
         body_type: 'male', 'fem', or 'huge' (aliases accepted)
         name: Object name (defaults to ``CoH_<body_type>_bindpose``)
+        tail_mode: How to orient bone tails. ``'chain'`` points each tail at
+            its child joint — nicer to select and hand-pose. ``'nub'`` gives
+            every bone a short +Y stub with zero roll, exactly like Geopy and
+            cohbodies.blend, so game/Geopy-authored ``.anim`` rotations map 1:1.
+            Bone *head* (the deform pivot) is identical either way.
 
     Returns:
         The created armature object.
@@ -107,7 +118,7 @@ def create_bind_pose_armature(context, body_type="male", name=None):
 
     bpy.ops.object.mode_set(mode='EDIT')
     try:
-        _build_bind_pose(armature, world, "HIPS", None)
+        _build_bind_pose(armature, world, "Hips", None, tail_mode)
     finally:
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -119,30 +130,33 @@ def create_bind_pose_armature(context, body_type="male", name=None):
     return obj
 
 
-def _build_bind_pose(armature, world, bone_name, parent_name):
-    """Recursively create a bone at its bind-pose joint, tail toward a child."""
-    head = mathutils.Vector(world.get(bone_name, (0.0, 0.0, 0.0)))
-    children = STANDARD_HIERARCHY.get(bone_name, [])
+def _bind_pose_tail(head, bone_name, parent_name, world, tail_mode):
+    """Compute a bone's tail for create_bind_pose_armature."""
+    if tail_mode == "nub":
+        # Geopy / cohbodies convention: short +Y stub, zero roll.
+        return head + mathutils.Vector(NUB_TAIL_VECTOR) * NUB_TAIL_LENGTH
 
-    # Point the tail at the first child that sits somewhere other than the head,
-    # so the bone visibly runs down the chain.
-    tail = None
-    for child_name in children:
+    # 'chain': point at the first child joint that isn't coincident with head.
+    for child_name in STANDARD_HIERARCHY.get(bone_name, []):
         if child_name in world:
             cvec = mathutils.Vector(world[child_name])
             if (cvec - head).length > 1e-5:
-                tail = cvec
-                break
+                return cvec
 
-    if tail is None:
-        # Leaf (or degenerate) bone: continue the direction from the parent,
-        # falling back to a short vertical stub.
-        direction = None
-        if parent_name and parent_name in world:
-            direction = head - mathutils.Vector(world[parent_name])
-        if direction is None or direction.length < 1e-5:
-            direction = mathutils.Vector((0.0, 0.0, DEFAULT_BONE_LENGTH))
-        tail = head + direction.normalized() * DEFAULT_BONE_LENGTH
+    # Leaf (or degenerate) bone: continue the direction from the parent,
+    # falling back to a short vertical stub.
+    direction = None
+    if parent_name and parent_name in world:
+        direction = head - mathutils.Vector(world[parent_name])
+    if direction is None or direction.length < 1e-5:
+        direction = mathutils.Vector((0.0, 0.0, DEFAULT_BONE_LENGTH))
+    return head + direction.normalized() * DEFAULT_BONE_LENGTH
+
+
+def _build_bind_pose(armature, world, bone_name, parent_name, tail_mode="chain"):
+    """Recursively create a bone at its bind-pose joint."""
+    head = mathutils.Vector(world.get(bone_name, (0.0, 0.0, 0.0)))
+    tail = _bind_pose_tail(head, bone_name, parent_name, world, tail_mode)
 
     edit_bone = armature.edit_bones.new(bone_name)
     edit_bone.head = head
@@ -153,8 +167,8 @@ def _build_bind_pose(armature, world, bone_name, parent_name):
         if parent_bone:
             edit_bone.parent = parent_bone
 
-    for child_name in children:
-        _build_bind_pose(armature, world, child_name, bone_name)
+    for child_name in STANDARD_HIERARCHY.get(bone_name, []):
+        _build_bind_pose(armature, world, child_name, bone_name, tail_mode)
 
 
 def armature_from_anim(context, anim_data, name="CoH_Armature"):
