@@ -19,13 +19,26 @@ from .formats.geo import GeoFile, GeoModel, GeoHeader, TexID, BoneInfo, MAX_OBJB
 from .core.coords import game_to_blender, blender_to_game
 import math
 import os
+import re
+
+
+# CoH names reduced meshes with a `_LOD1` / `_LOD2` (…) token in the model
+# name (e.g. ``GEO_N_LlegL_Gunslinger_01_LOD1__dblsided``); the full-detail
+# mesh has no such token. `lod_distances` is shared by a base and its LODs, so
+# the name is the reliable discriminator.
+_LOD_RE = re.compile(r'_LOD\d', re.IGNORECASE)
+
+
+def is_lod_model(name):
+    """True if a GEO model name is a reduced LOD variant (not the full mesh)."""
+    return bool(_LOD_RE.search(name or ""))
 
 
 # ─── Import: GEO → Blender ──────────────────────────────────────────────
 
 
 def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None,
-                  armature_obj=None, attach_to_bones=False):
+                  armature_obj=None, attach_to_bones=False, skip_lods=False):
     """Create Blender mesh objects from a GEO file.
 
     Args:
@@ -43,14 +56,22 @@ def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None,
             character/costume geos author each piece in bone-local space, so
             this is what assembles them onto the skeleton. Object transform
             only — mesh data is untouched, so export still round-trips.
+        skip_lods: Skip reduced LOD meshes (``*_LOD1``/``*_LOD2``…), importing
+            only the full-detail piece for each part. Leaves a clean, editable
+            scene instead of 2-3 overlapping copies per object. Default False
+            so round-trip callers keep every model.
 
     Returns:
         List of created Blender objects
     """
+    models = geo_file.models
+    if skip_lods:
+        models = [m for m in models if not is_lod_model(m.name)]
+
     objects = []
 
     tex_image_cache = {}
-    for model in geo_file.models:
+    for model in models:
         obj = _create_mesh_object(
             context, model, geo_file.tex_names,
             texture_dir=texture_dir, tex_image_cache=tex_image_cache,
@@ -59,7 +80,7 @@ def mesh_from_geo(context, geo_file, name="GEO_Import", texture_dir=None,
 
     if armature_obj is not None:
         if attach_to_bones:
-            position_objects_on_bones(objects, geo_file.models, armature_obj)
+            position_objects_on_bones(objects, models, armature_obj)
         bind_meshes_to_armature(objects, armature_obj)
 
     return objects

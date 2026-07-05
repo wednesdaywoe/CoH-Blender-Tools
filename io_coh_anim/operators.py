@@ -386,6 +386,16 @@ class COH_OT_import_geo(bpy.types.Operator, ImportHelper):
         default=True,
     )
 
+    skip_lods: BoolProperty(
+        name="Skip LOD Meshes",
+        description="Skip the reduced distance-LOD variants (*_LOD1, *_LOD2, "
+                    "…) and import only the full-detail mesh for each part. A "
+                    "CoH character carries 2-3 overlapping copies of every "
+                    "piece otherwise. Untick to import every model (needed to "
+                    "re-export a complete .geo)",
+        default=True,
+    )
+
     bind_to_armature: BoolProperty(
         name="Bind to Armature",
         description="If a CoH armature is active (or the scene has exactly one), "
@@ -476,11 +486,18 @@ class COH_OT_import_geo(bpy.types.Operator, ImportHelper):
 
         objects = mesh_from_geo(context, geo_file, texture_dir=texture_dir,
                                 armature_obj=armature_obj,
-                                attach_to_bones=self.attach_to_bones)
+                                attach_to_bones=self.attach_to_bones,
+                                skip_lods=self.skip_lods)
 
-        total_verts = sum(m.vert_count for m in geo_file.models)
+        total_verts = sum(len(o.data.vertices)
+                          for o in objects if o.type == 'MESH')
         skinned = sum(1 for o in objects if o.type == 'MESH' and o.vertex_groups)
         msg = f"Imported {len(objects)} mesh(es), {total_verts} vertices"
+        if self.skip_lods:
+            from .mesh import is_lod_model
+            n_lod = sum(1 for m in geo_file.models if is_lod_model(m.name))
+            if n_lod:
+                msg += f" (skipped {n_lod} LOD mesh(es))"
         if skinned:
             if created_armature:
                 msg += f"; built bind-pose armature '{armature_obj.name}' and " \
