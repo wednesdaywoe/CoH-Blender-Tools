@@ -81,7 +81,8 @@ def _build_hierarchy(armature, bone_name, parent_name):
         _build_hierarchy(armature, child_name, bone_name)
 
 
-def create_bind_pose_armature(context, body_type="male", name=None, tail_mode="chain"):
+def create_bind_pose_armature(context, body_type="male", name=None,
+                              tail_mode="chain", ground_anchored=False):
     """Create a CoH armature posed at the canonical rest (bind) pose.
 
     Unlike ``create_coh_armature`` (which stacks every bone at the origin),
@@ -99,6 +100,9 @@ def create_bind_pose_armature(context, body_type="male", name=None, tail_mode="c
             every bone a short +Y stub with zero roll, exactly like Geopy and
             cohbodies.blend, so game/Geopy-authored ``.anim`` rotations map 1:1.
             Bone *head* (the deform pivot) is identical either way.
+        ground_anchored: If False (default), HIPS sits at the origin so the rig
+            overlays a hip-centred imported ``.geo``. If True, the rig is placed
+            feet-on-ground to match a cohbodies/Geopy skeleton.
 
     Returns:
         The created armature object.
@@ -108,7 +112,8 @@ def create_bind_pose_armature(context, body_type="male", name=None, tail_mode="c
         name = f"CoH_{body_type}_bindpose"
 
     # World-space joint positions in Blender coordinates.
-    world = {b: game_to_blender(p) for b, p in bind_pose_world(body_type).items()}
+    world = {b: game_to_blender(p)
+             for b, p in bind_pose_world(body_type, ground_anchored).items()}
 
     armature = bpy.data.armatures.new(f"{name}_Data")
     obj = bpy.data.objects.new(name, armature)
@@ -118,7 +123,8 @@ def create_bind_pose_armature(context, body_type="male", name=None, tail_mode="c
 
     bpy.ops.object.mode_set(mode='EDIT')
     try:
-        _build_bind_pose(armature, world, "Hips", None, tail_mode)
+        _build_bind_pose(armature, world, "Hips", None, tail_mode,
+                         STANDARD_HIERARCHY)
     finally:
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -130,14 +136,18 @@ def create_bind_pose_armature(context, body_type="male", name=None, tail_mode="c
     return obj
 
 
-def _bind_pose_tail(head, bone_name, parent_name, world, tail_mode):
-    """Compute a bone's tail for create_bind_pose_armature."""
+def _bind_pose_tail(head, bone_name, parent_name, world, tail_mode, children_map):
+    """Compute a bone's tail for a positioned rest armature.
+
+    ``children_map`` is {bone_name: [child names]} for the skeleton being built
+    (the standard hierarchy, or one read from a skel file).
+    """
     if tail_mode == "nub":
         # Geopy / cohbodies convention: short +Y stub, zero roll.
         return head + mathutils.Vector(NUB_TAIL_VECTOR) * NUB_TAIL_LENGTH
 
     # 'chain': point at the first child joint that isn't coincident with head.
-    for child_name in STANDARD_HIERARCHY.get(bone_name, []):
+    for child_name in children_map.get(bone_name, []):
         if child_name in world:
             cvec = mathutils.Vector(world[child_name])
             if (cvec - head).length > 1e-5:
@@ -153,10 +163,12 @@ def _bind_pose_tail(head, bone_name, parent_name, world, tail_mode):
     return head + direction.normalized() * DEFAULT_BONE_LENGTH
 
 
-def _build_bind_pose(armature, world, bone_name, parent_name, tail_mode="chain"):
+def _build_bind_pose(armature, world, bone_name, parent_name, tail_mode,
+                     children_map):
     """Recursively create a bone at its bind-pose joint."""
     head = mathutils.Vector(world.get(bone_name, (0.0, 0.0, 0.0)))
-    tail = _bind_pose_tail(head, bone_name, parent_name, world, tail_mode)
+    tail = _bind_pose_tail(head, bone_name, parent_name, world, tail_mode,
+                           children_map)
 
     edit_bone = armature.edit_bones.new(bone_name)
     edit_bone.head = head
@@ -167,8 +179,170 @@ def _build_bind_pose(armature, world, bone_name, parent_name, tail_mode="chain")
         if parent_bone:
             edit_bone.parent = parent_bone
 
-    for child_name in STANDARD_HIERARCHY.get(bone_name, []):
-        _build_bind_pose(armature, world, child_name, bone_name, tail_mode)
+    for child_name in children_map.get(bone_name, []):
+        _build_bind_pose(armature, world, child_name, bone_name, tail_mode,
+                         children_map)
+
+
+def _skeleton_world_from_anim(anim_data, anchor="file"):
+    """Reconstruct rest-pose joint positions from a ``.anim`` file.
+
+    Every full-body ``.anim`` carries, for each bone, its constant local offset
+    from its parent as the first key of the bone's position track. Accumulating
+    those offsets down the skeleton tree reproduces the rest skeleton — the same
+    reconstruction Geopy's import_skel and the game's runtime perform.
+
+    Two sources for the tree, in priority order:
+
+    1. An embedded hierarchy (``child``/``next`` links). Only prop skeletons
+       (``skel_ready.anim``) and dev-exported files carry one; the game ships no
+       humanoid skeleton file with an embedded hierarchy.
+    2. Otherwise the standard humanoid hierarchy (``core.bones``), which every
+       full-body character animation implicitly targets — this is the common
+       case for the shipped ``fem/`` / ``male/`` / ``huge/`` animations.
+
+    Args:
+        anim_data: AnimData from ``read_anim``.
+        anchor: ``'file'`` keeps HIPS at its own frame-0 position (feet on the
+            ground, as the file stores it); ``'hip'`` drops HIPS to the origin
+            so the rig overlays a hip-centred imported mesh.
+
+    Returns:
+        (world_game, children_map, root_name):
+            world_game   {bone_name: (x, y, z)} in game space
+            children_map {bone_name: [child bone names]}
+            root_name    name of the root bone (or None)
+    """
+    offsets = {bt.bone_id: bt.positions[0]
+               for bt in anim_data.bone_tracks if bt.positions}
+
+    if anim_data.hierarchy:
+        return _skeleton_world_from_hierarchy(anim_data.hierarchy, offsets, anchor)
+    return _skeleton_world_from_standard(offsets, anchor)
+
+
+def _skeleton_world_from_hierarchy(h, offsets, anchor):
+    """Reconstruct joints by walking an embedded ``child``/``next`` tree."""
+    world = {}
+    children = {}
+    root_name = bone_name_from_id(h.root)
+
+    def visit(bone_id, parent_pos, parent_name, is_root):
+        if bone_id < 0 or bone_id >= len(h.bones):
+            return
+        name = bone_name_from_id(bone_id)
+        off = offsets.get(bone_id, (0.0, 0.0, 0.0))
+        if is_root and anchor == "hip":
+            off = (0.0, 0.0, 0.0)
+        pos = (parent_pos[0] + off[0],
+               parent_pos[1] + off[1],
+               parent_pos[2] + off[2])
+
+        if name:
+            world[name] = pos
+            children.setdefault(name, [])
+            if parent_name:
+                children.setdefault(parent_name, []).append(name)
+
+        link = h.bones[bone_id]
+        # First child accumulates from this bone; siblings share our parent.
+        if link.child != -1:
+            visit(link.child, pos, name or parent_name, False)
+        if link.next != -1:
+            visit(link.next, parent_pos, parent_name, is_root)
+
+    visit(h.root, (0.0, 0.0, 0.0), None, True)
+    return world, children, root_name
+
+
+def _skeleton_world_from_standard(offsets, anchor):
+    """Reconstruct joints down the standard humanoid hierarchy from HIPS."""
+    name_off = {}
+    for bid, off in offsets.items():
+        n = bone_name_from_id(bid)
+        if n:
+            name_off[n] = off
+
+    root_off = name_off.get("Hips", (0.0, 0.0, 0.0)) if anchor == "file" \
+        else (0.0, 0.0, 0.0)
+
+    world = {}
+
+    def resolve(name):
+        if name in world:
+            return world[name]
+        parent = BONE_PARENT.get(name)
+        if parent is None:
+            pos = root_off
+        else:
+            pw = resolve(parent)
+            off = name_off.get(name, (0.0, 0.0, 0.0))
+            pos = (pw[0] + off[0], pw[1] + off[1], pw[2] + off[2])
+        world[name] = pos
+        return pos
+
+    bones = set(STANDARD_HIERARCHY)
+    for kids in STANDARD_HIERARCHY.values():
+        bones.update(kids)
+    for b in bones:
+        resolve(b)
+
+    return world, STANDARD_HIERARCHY, "Hips"
+
+
+def armature_from_skeleton_anim(context, anim_data, name="CoH_Skeleton",
+                                tail_mode="nub", anchor="file"):
+    """Build a correctly-positioned rest armature from a ``.anim`` file.
+
+    Each bone is placed at its real joint position — reconstructed from the
+    frame-0 position keys down the skeleton tree (an embedded hierarchy if the
+    file has one, else the standard humanoid hierarchy). This matches Geopy's
+    import_skel and the game's runtime rest assembly. No animation is applied;
+    the result is the rest skeleton, ready to bind a skinned mesh or receive a
+    separate ``.anim``.
+
+    Args:
+        context: Blender context
+        anim_data: AnimData from ``read_anim``
+        name: Object name
+        tail_mode: ``'nub'`` (+Y stub, zero roll — matches Geopy/game anims,
+            default) or ``'chain'`` (tails point at child joints, easier to pose)
+        anchor: ``'file'`` (keep the file's feet-on-ground HIPS position) or
+            ``'hip'`` (recentre HIPS to the origin for a hip-centred mesh)
+
+    Returns:
+        The created armature object.
+
+    Raises:
+        ValueError: if no recognisable root bone could be reconstructed.
+    """
+    world_game, children_map, root_name = _skeleton_world_from_anim(
+        anim_data, anchor=anchor)
+    if not root_name or root_name not in world_game:
+        raise ValueError("Could not reconstruct a skeleton from this .anim "
+                         "(no recognised CoH bones).")
+
+    world = {b: game_to_blender(p) for b, p in world_game.items()}
+
+    armature = bpy.data.armatures.new(f"{name}_Data")
+    obj = bpy.data.objects.new(name, armature)
+    context.collection.objects.link(obj)
+    context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    bpy.ops.object.mode_set(mode='EDIT')
+    try:
+        _build_bind_pose(armature, world, root_name, None, tail_mode,
+                         children_map)
+    finally:
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    for bone in armature.bones:
+        bid = bone_id_from_name(bone.name)
+        if bid >= 0:
+            bone["coh_bone_id"] = bid
+
+    return obj
 
 
 def armature_from_anim(context, anim_data, name="CoH_Armature"):

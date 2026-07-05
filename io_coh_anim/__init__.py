@@ -38,6 +38,7 @@ if _HAS_BPY:
     def menu_func_import(self, context):
         self.layout.operator("import_anim.coh_anim", text="CoH Animation (.anim)")
         self.layout.operator("import_anim.coh_animx", text="CoH Animation Text (.animx)")
+        self.layout.operator("import_anim.coh_skeleton", text="CoH Skeleton (skel_*.anim)")
         self.layout.operator("import_anim.coh_skelx", text="CoH Skeleton (.skelx)")
         self.layout.operator("import_mesh.coh_geo", text="CoH Geometry (.geo)")
 
@@ -69,6 +70,7 @@ if _HAS_BPY:
             row = layout.row(align=True)
             row.operator("import_anim.coh_animx", text="Import .animx")
             row.operator("export_anim.coh_animx", text="Export .animx")
+            layout.operator("import_anim.coh_skeleton", text="Import Skeleton (skel_*.anim)")
             layout.operator("import_anim.coh_skelx", text="Import .skelx")
 
             layout.separator()

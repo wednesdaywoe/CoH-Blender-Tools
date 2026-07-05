@@ -152,6 +152,25 @@ BIND_POSE_LOCAL = {
 }
 
 
+# HIPS standing height per body type, in game space. Our derived bind pose
+# anchors HIPS at the origin so it overlays a hip-centred imported ``.geo`` (the
+# way real character meshes are authored). Geopy, cohbodies.blend and the game's
+# runtime instead anchor HIPS at its standing position (feet on the ground),
+# keeping the HIPS bone's own frame-0 position key. Adding this offset to every
+# bone reproduces that ground-anchored convention, so a derived rig lines up
+# with a cohbodies/Geopy skeleton or a mesh that was authored feet-on-ground.
+#
+# Measured directly from the dev skeletons in workshop/cohbodies.blend: with
+# this single offset applied, every core deform bone (torso/arms/legs) matches
+# cohbodies to < 2e-4. (Fingers and face sub-bones differ separately — see the
+# note on BIND_POSE_LOCAL finger values.)
+GROUND_OFFSET = {
+    "male": (0.0, 3.7439, 0.0874),
+    "fem": (0.0, 3.4715, 0.0874),
+    "huge": (0.0, 3.7439, 0.0874),
+}
+
+
 def resolve_body_type(body_type):
     """Normalise a body-type string to one of BODY_TYPES.
 
@@ -186,16 +205,20 @@ def guess_body_type(*hints):
     return "male"
 
 
-def bind_pose_world(body_type=DEFAULT_BODY_TYPE):
+def bind_pose_world(body_type=DEFAULT_BODY_TYPE, ground_anchored=False):
     """Compute world-space bind-pose bone positions for a body type.
 
-    Accumulates each bone's local offset down ``STANDARD_HIERARCHY`` from HIPS
-    (anchored at the origin). Bones without a tabulated offset sit on their
-    parent (zero local offset), which keeps the parent chain intact for bones
-    like FACE/EYES that aren't used for body-part skinning.
+    Accumulates each bone's local offset down ``STANDARD_HIERARCHY`` from HIPS.
+    Bones without a tabulated offset sit on their parent (zero local offset),
+    which keeps the parent chain intact for bones like FACE/EYES that aren't
+    used for body-part skinning.
 
     Args:
         body_type: 'male', 'fem', or 'huge' (aliases accepted).
+        ground_anchored: If False (default), HIPS sits at the origin so the rig
+            overlays a hip-centred imported mesh. If True, HIPS is placed at its
+            standing height (``GROUND_OFFSET``) so the whole rig matches the
+            cohbodies/Geopy/game feet-on-ground convention.
 
     Returns:
         dict {bone_name: (x, y, z)} in CoH game space, covering every bone in
@@ -203,6 +226,7 @@ def bind_pose_world(body_type=DEFAULT_BODY_TYPE):
     """
     bt = resolve_body_type(body_type)
     local = BIND_POSE_LOCAL[bt]
+    root_offset = GROUND_OFFSET[bt] if ground_anchored else (0.0, 0.0, 0.0)
 
     # Every bone in the standard deform hierarchy: parents (dict keys) and
     # their children.
@@ -218,7 +242,9 @@ def bind_pose_world(body_type=DEFAULT_BODY_TYPE):
         off = local.get(name, (0.0, 0.0, 0.0))
         parent = BONE_PARENT.get(name)
         if parent is None:
-            pos = off
+            pos = (root_offset[0] + off[0],
+                   root_offset[1] + off[1],
+                   root_offset[2] + off[2])
         else:
             pw = resolve(parent)
             pos = (pw[0] + off[0], pw[1] + off[1], pw[2] + off[2])

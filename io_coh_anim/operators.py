@@ -39,6 +39,14 @@ class COH_OT_import_anim(bpy.types.Operator, ImportHelper):
             # Apply animation to existing armature
             apply_animation(context, obj, anim_data)
             self.report({'INFO'}, f"Applied animation '{anim_data.name}' ({len(anim_data.bone_tracks)} bones)")
+        elif anim_data.hierarchy:
+            # A skel_*.anim: build a correctly-positioned rest skeleton rather
+            # than stacking bones at the origin (see COH_OT_import_skeleton).
+            from .armature import armature_from_skeleton_anim
+            anim_name = os.path.splitext(os.path.basename(self.filepath))[0]
+            obj = armature_from_skeleton_anim(context, anim_data, name=anim_name)
+            self.report({'INFO'}, f"Imported skeleton '{anim_data.name}' "
+                                  f"({len(obj.data.bones)} bones, rest pose)")
         else:
             # Create new armature
             anim_name = os.path.splitext(os.path.basename(self.filepath))[0]
@@ -76,6 +84,69 @@ class COH_OT_import_animx(bpy.types.Operator, ImportHelper):
 
         self.report({'INFO'},
                     f"Applied ANIMX animation ({animx_data.total_frames} frames, {len(animx_data.bones)} bones)")
+        return {'FINISHED'}
+
+
+class COH_OT_import_skeleton(bpy.types.Operator, ImportHelper):
+    """Import a City of Heroes skeleton from a binary .anim as a
+    correctly-positioned rest armature (Geopy import_skel equivalent).
+
+    Works on any full-body .anim: joints are reconstructed from each bone's
+    frame-0 offset, down an embedded hierarchy if present, else the standard
+    humanoid hierarchy"""
+    bl_idname = "import_anim.coh_skeleton"
+    bl_label = "Import CoH Skeleton (.anim)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".anim"
+    filter_glob: StringProperty(default="*.anim", options={'HIDDEN'})
+
+    tail_mode: EnumProperty(
+        name="Bone Tails",
+        description="How to orient bones. The deform pivot is identical either way",
+        items=[
+            ('nub', "+Y Nub (Geopy/game-exact)",
+             "Short +Y stubs with zero roll, matching Geopy and the real dev "
+             "rigs so game-authored .anim rotations map 1:1"),
+            ('chain', "Toward Child",
+             "Point each bone at its child joint — easier to select and "
+             "hand-pose"),
+        ],
+        default='nub',
+    )
+
+    anchor: EnumProperty(
+        name="Anchor",
+        description="Where to place the root (HIPS)",
+        items=[
+            ('file', "Feet on Ground (as stored)",
+             "Keep HIPS at the standing height the file stores — matches "
+             "cohbodies.blend and Geopy"),
+            ('hip', "Hip-centred at Origin",
+             "Drop HIPS to the origin so the skeleton overlays a hip-centred "
+             "imported .geo"),
+        ],
+        default='file',
+    )
+
+    def execute(self, context):
+        from .formats.anim_binary import read_anim
+        from .armature import armature_from_skeleton_anim
+
+        anim_data = read_anim(self.filepath)
+        name = os.path.splitext(os.path.basename(self.filepath))[0]
+        try:
+            obj = armature_from_skeleton_anim(context, anim_data, name=name,
+                                              tail_mode=self.tail_mode,
+                                              anchor=self.anchor)
+        except ValueError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+
+        src = "embedded hierarchy" if anim_data.hierarchy \
+            else "standard humanoid hierarchy"
+        self.report({'INFO'}, f"Imported skeleton '{name}' "
+                              f"({len(obj.data.bones)} bones, {src})")
         return {'FINISHED'}
 
 
@@ -558,6 +629,7 @@ def _bone_to_skelx(blender_bone):
 CLASSES = [
     COH_OT_import_anim,
     COH_OT_import_animx,
+    COH_OT_import_skeleton,
     COH_OT_import_skelx,
     COH_OT_import_geo,
     COH_OT_export_anim,
