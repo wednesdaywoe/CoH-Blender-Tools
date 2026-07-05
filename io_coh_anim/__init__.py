@@ -15,7 +15,7 @@ workflow with a free, modern Blender-based pipeline.
 bl_info = {
     "name": "City of Heroes Animation & Geometry Tools",
     "author": "CoH Community",
-    "version": (2, 0, 0),
+    "version": (2, 1, 0),
     "blender": (4, 0, 0),
     "location": "File > Import/Export, 3D View > Sidebar > CoH",
     "description": "Import/export City of Heroes animations and geometry (ANIM, ANIMX, SKELX, GEO, TEXTURE)",

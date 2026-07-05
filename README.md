@@ -39,6 +39,28 @@ Two equivalent options:
 
 Once enabled you'll find the importers under **File → Import → CoH ...**.
 
+### Rebuilding the addon zip (contributors)
+
+`io_coh_anim.zip` is generated from the `io_coh_anim/` source — never edit the zip directly. After changing anything under `io_coh_anim/`, regenerate it:
+
+```
+./build_zip.sh
+```
+
+A tracked pre-commit hook keeps it in sync automatically. Enable it once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+Then any commit touching `io_coh_anim/` rebuilds and stages `io_coh_anim.zip`, so the installable artifact can't fall behind the source.
+
+For active development, skip the zip round-trip entirely — symlink the source straight into Blender's addons folder so your edits are live after a Blender restart:
+
+```
+ln -s "$PWD/io_coh_anim" ~/.config/blender/<version>/scripts/addons/io_coh_anim
+```
+
 ---
 
 ## Option A — Workshop launcher (recommended)

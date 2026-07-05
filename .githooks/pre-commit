@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#
+# Keep io_coh_anim.zip in sync with the addon source. If a commit touches
+# anything under io_coh_anim/, rebuild the distributable zip and include it in
+# the same commit — so the installable artifact can never drift from source.
+#
+# Enable in a fresh clone with:  git config core.hooksPath .githooks
+#
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+if git diff --cached --name-only | grep -q '^io_coh_anim/'; then
+    echo "[pre-commit] io_coh_anim/ changed → rebuilding io_coh_anim.zip"
+    "$ROOT/build_zip.sh"
+    git add "$ROOT/io_coh_anim.zip"
+fi
