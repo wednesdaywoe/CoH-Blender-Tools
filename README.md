@@ -2,7 +2,7 @@
 
 Import City of Heroes geometry (`.geo`) and animations (`.anim`) directly into Blender, with material/texture wiring.
 
-The goal of this project is to replace the legacy 3DS Max 2011 + GetVrml + GetAnimation2 + GetTex workflow. So far it's been tested against Ouroboros v2i210 piggs and Blender 5.0 (4.0+ should work).
+The goal of this project is to replace the legacy 3DS Max 2011 + GetVrml + GetAnimation2 + GetTex workflow. So far it's been tested against Homecoming and Ouroboros v2i210 piggs and Blender 5.1 (4.0+ should work)
 
 ---
 
@@ -23,7 +23,7 @@ CoH Blender Tools/
 
 ## Requirements
 
-- **Blender 4.0+** (5.0 recommended). Used for both the addon and as the runtime for the Workshop launcher's bundled Python.
+- **Blender 4.0+** (5.1 recommended). Used for both the addon and as the runtime for the Workshop launcher's bundled Python.
 - **A working CoH install** with a `Client/piggs/` directory containing the game's `.pigg` archives. Ouroboros, Homecoming, etc. all work — the tool doesn't care about the distribution.
 - **`bindump.exe`** (only needed to resolve `X_*` trick texture names; ships with Ouroboros at the install root). Direct texture refs work without it.
 - No `pip install`, no system Python required if you use the Workshop launcher. The CLI scripts need Python 3.10+ on `PATH` (or use the `py` launcher on Windows).
@@ -56,7 +56,7 @@ Workshop only manages patch piggs with the `coh_workshop_` filename prefix. Anyt
 
 Closing the launcher console window shuts the server down.
 
-**Scope of v1**: static unskinned `.geo` round-trip and patch-pigg staging. Animations and skinned meshes work in the addon but the Workshop's round-trip flow doesn't yet handle them — use the addon directly via Blender for those, or the CLI scripts below.
+**Scope of v1**: `.geo` round-trip (static or skinned) and patch-pigg staging. Static geometry round-trips bit-exact; skinned meshes round-trip functionally (weights are re-encoded as top-2 influences per vertex, not bit-exact). Animations work in the addon but the Workshop's round-trip flow is geometry-only and doesn't handle `.anim` files — use the addon directly via Blender for those, or the CLI scripts below.
 
 ---
 
